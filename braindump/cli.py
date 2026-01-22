@@ -369,6 +369,7 @@ def new(
 ) -> None:
     """Create a new journal entry with optional tags."""
     ensure_journal_dir()
+    check_and_pull_remote(silent=True)
     
     today_prefix = get_today_date_prefix()
     increment = get_next_increment()
@@ -416,7 +417,8 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['cyan']}]tag[/{MONOKAI['cyan']}]        [{MONOKAI['grey']}]Add or remove tags[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]synth[/{MONOKAI['cyan']}]      [{MONOKAI['grey']}]Toggle synthesised status[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]delete[/{MONOKAI['cyan']}]     [{MONOKAI['grey']}]Delete an entry[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['cyan']}]sync[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Synchronise with git[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['cyan']}]sync[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Pull remote changes, commit and push[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['cyan']}]pull[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Pull remote changes only[/{MONOKAI['grey']}]")
     console.print()
     console.print(f"[{MONOKAI['grey']}]Editor Controls:[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]New bullet at same level[/{MONOKAI['grey']}]")
@@ -425,6 +427,110 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}](twice at empty dot point) - Save and exit[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
     console.print()
+    console.print(f"[{MONOKAI['grey']}]Note: Commands automatically pull remote changes before running.[/{MONOKAI['grey']}]")
+    console.print()
+
+
+def is_git_repo() -> bool:
+    """Check if journal directory is a git repository."""
+    git_dir = JOURNAL_DIR / ".git"
+    return git_dir.exists()
+
+
+def has_remote() -> bool:
+    """Check if the git repository has a remote configured."""
+    if not is_git_repo():
+        return False
+    result = subprocess.run(
+        ["git", "remote"],
+        cwd=JOURNAL_DIR,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() != ""
+
+
+def has_uncommitted_changes() -> bool:
+    """Check if there are uncommitted changes in the repository."""
+    if not is_git_repo():
+        return False
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=JOURNAL_DIR,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() != ""
+
+
+def pull_remote(silent: bool = False) -> bool:
+    """Pull changes from remote. Returns True if successful."""
+    if not is_git_repo() or not has_remote():
+        return True  # Nothing to pull from
+    
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--rebase"],
+            cwd=JOURNAL_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            if not silent:
+                console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Failed to pull remote changes: {result.stderr}")
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def check_and_pull_remote(silent: bool = False) -> bool:
+    """Check if remote has updates and pull them. Returns True if successful or no remote."""
+    if not is_git_repo() or not has_remote():
+        return True
+    
+    # Check for uncommitted changes first
+    if has_uncommitted_changes():
+        if not silent:
+            console.print()
+            console.print(f"[{MONOKAI['yellow']}]⚠[/{MONOKAI['yellow']}] You have uncommitted local changes. Run [{MONOKAI['cyan']}]dump sync[/{MONOKAI['cyan']}] to synchronise.")
+            console.print()
+        return True  # Continue anyway, but warn the user
+    
+    try:
+        # Fetch remote to check for updates
+        result = subprocess.run(
+            ["git", "fetch"],
+            cwd=JOURNAL_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return True  # Fetch failed, but continue anyway
+        
+        # Check if local is behind remote
+        result = subprocess.run(
+            ["git", "status", "-uno"],
+            cwd=JOURNAL_DIR,
+            capture_output=True,
+            text=True,
+        )
+        
+        if "Your branch is behind" in result.stdout:
+            if not silent:
+                console.print()
+                console.print(f"[{MONOKAI['blue']}]↓[/{MONOKAI['blue']}] Pulling remote changes...")
+            
+            if not pull_remote(silent):
+                return False
+            
+            if not silent:
+                console.print(f"[{MONOKAI['green']}]✓[/{MONOKAI['green']}] Synced with remote.")
+                console.print()
+        
+        return True
+    except Exception:
+        return True  # Continue anyway on any error
 
 
 @app.command()
@@ -433,11 +539,17 @@ def sync() -> None:
     ensure_journal_dir()
     
     # Check if journal directory is a git repository
-    git_dir = JOURNAL_DIR / ".git"
-    if not git_dir.exists():
+    if not is_git_repo():
         console.print()
         console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Journal directory is not a git repository.")
         console.print(f"  Initialise with: [{MONOKAI['cyan']}]cd {JOURNAL_DIR} && git init[/{MONOKAI['cyan']}]")
+        console.print()
+        raise typer.Exit(1)
+    
+    if not has_remote():
+        console.print()
+        console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] No remote configured for the repository.")
+        console.print(f"  Add a remote with: [{MONOKAI['cyan']}]cd {JOURNAL_DIR} && git remote add origin <url>[/{MONOKAI['cyan']}]")
         console.print()
         raise typer.Exit(1)
     
@@ -446,6 +558,69 @@ def sync() -> None:
     
     try:
         with console.status(f"[bold {MONOKAI['blue']}]Synchronising...[/bold {MONOKAI['blue']}]", spinner="dots"):
+            # First, fetch and check for remote changes
+            result = subprocess.run(
+                ["git", "fetch"],
+                cwd=JOURNAL_DIR,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise Exception(f"git fetch failed: {result.stderr}")
+            
+            # Check if we need to stash local changes before pulling
+            has_changes = has_uncommitted_changes()
+            stashed = False
+            
+            if has_changes:
+                # Git add and stash
+                result = subprocess.run(
+                    ["git", "add", "."],
+                    cwd=JOURNAL_DIR,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise Exception(f"git add failed: {result.stderr}")
+                
+                result = subprocess.run(
+                    ["git", "stash", "push", "-m", "braindump-auto-stash"],
+                    cwd=JOURNAL_DIR,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0 and "No local changes" not in result.stdout:
+                    stashed = True
+            
+            # Pull remote changes with rebase
+            result = subprocess.run(
+                ["git", "pull", "--rebase"],
+                cwd=JOURNAL_DIR,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                # Try to restore stash if pull failed
+                if stashed:
+                    subprocess.run(
+                        ["git", "stash", "pop"],
+                        cwd=JOURNAL_DIR,
+                        capture_output=True,
+                        text=True,
+                    )
+                raise Exception(f"git pull failed: {result.stderr}")
+            
+            # Pop stash if we stashed
+            if stashed:
+                result = subprocess.run(
+                    ["git", "stash", "pop"],
+                    cwd=JOURNAL_DIR,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise Exception(f"git stash pop failed (you may have conflicts): {result.stderr}")
+            
             # Git add
             result = subprocess.run(
                 ["git", "add", "."],
@@ -479,13 +654,61 @@ def sync() -> None:
                 raise Exception(f"git push failed: {result.stderr}")
         
         console.print()
-        console.print(f"[{MONOKAI['green']}]Successfully synchronised with remote.[/{MONOKAI['green']}]")
-        console.print(f"  Commit message: [{MONOKAI['cyan']}]{commit_message}[/{MONOKAI['cyan']}]")
+        console.print(f"[{MONOKAI['green']}]✓ Successfully synchronised with remote.[/{MONOKAI['green']}]")
+        console.print(f"  [{MONOKAI['grey']}]Commit: {commit_message}[/{MONOKAI['grey']}]")
         console.print()
         
     except Exception as e:
         console.print()
         console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Synchronisation failed: {e}")
+        console.print()
+        raise typer.Exit(1)
+
+
+@app.command()
+def pull() -> None:
+    """Pull latest changes from git remote without pushing."""
+    ensure_journal_dir()
+    
+    if not is_git_repo():
+        console.print()
+        console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Journal directory is not a git repository.")
+        console.print(f"  Initialise with: [{MONOKAI['cyan']}]cd {JOURNAL_DIR} && git init[/{MONOKAI['cyan']}]")
+        console.print()
+        raise typer.Exit(1)
+    
+    if not has_remote():
+        console.print()
+        console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] No remote configured for the repository.")
+        console.print(f"  Add a remote with: [{MONOKAI['cyan']}]cd {JOURNAL_DIR} && git remote add origin <url>[/{MONOKAI['cyan']}]")
+        console.print()
+        raise typer.Exit(1)
+    
+    if has_uncommitted_changes():
+        console.print()
+        console.print(f"[{MONOKAI['yellow']}]⚠[/{MONOKAI['yellow']}] You have uncommitted local changes.")
+        console.print(f"  Run [{MONOKAI['cyan']}]dump sync[/{MONOKAI['cyan']}] to commit and sync your changes first.")
+        console.print()
+        raise typer.Exit(1)
+    
+    try:
+        with console.status(f"[bold {MONOKAI['blue']}]Pulling...[/bold {MONOKAI['blue']}]", spinner="dots"):
+            result = subprocess.run(
+                ["git", "pull", "--rebase"],
+                cwd=JOURNAL_DIR,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise Exception(f"git pull failed: {result.stderr}")
+        
+        console.print()
+        console.print(f"[{MONOKAI['green']}]✓ Successfully pulled from remote.[/{MONOKAI['green']}]")
+        console.print()
+        
+    except Exception as e:
+        console.print()
+        console.print(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Pull failed: {e}")
         console.print()
         raise typer.Exit(1)
 
@@ -545,6 +768,7 @@ def list_entries(
 ) -> None:
     """Display the last n journal entries."""
     ensure_journal_dir()
+    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     
@@ -610,6 +834,7 @@ def open_file(
 ) -> None:
     """Open a journal entry by its ID from the status list."""
     ensure_journal_dir()
+    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     
@@ -728,6 +953,7 @@ def edit(
 ) -> None:
     """Open a journal entry in your system's default editor."""
     ensure_journal_dir()
+    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     

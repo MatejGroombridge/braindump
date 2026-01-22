@@ -17,6 +17,10 @@ pip install -e .
 ```bash
 pip install git+https://github.com/MatejGroombridge/braindump.git
 ```
+## Update
+```bash
+pip install --force-reinstall git+https://github.com/MatejGroombridge/braindump.git   
+```
 
 After installation, ensure the Python Scripts folder is on your PATH:
 
@@ -41,7 +45,8 @@ The tool is invoked using the `dump` command. Run `dump help` for full command l
 | `tag`    | Add or remove tags             |
 | `synth`  | Toggle synthesised status      |
 | `delete` | Delete an entry                |
-| `sync`   | Synchronise with git           |
+| `sync`   | Pull, commit and push with git |
+| `pull`   | Pull remote changes only       |
 | `help`   | Show all commands and controls |
 
 ### Create a new entry
@@ -111,10 +116,16 @@ dump delete 1                   # Delete entry #1
 ### Sync with git
 
 ```bash
-dump sync                       # Git add, commit, push
+dump sync                       # Pull remote, commit local changes, push
+dump pull                       # Pull remote changes only
 ```
 
-Commits with message format: `Log: YYYY-MM-DD`
+The `sync` command performs a full bidirectional sync:
+1. Fetches and pulls remote changes (stashing local changes if needed)
+2. Commits all local changes with message format: `Log: YYYY-MM-DD`
+3. Pushes to remote
+
+**Auto-sync:** Commands like `new`, `list`, `open`, and `edit` automatically pull remote changes before running, keeping your dumps synced across devices.
 
 ### Show help
 
