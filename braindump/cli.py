@@ -369,7 +369,6 @@ def new(
 ) -> None:
     """Create a new journal entry with optional tags."""
     ensure_journal_dir()
-    check_and_pull_remote(silent=True)
     
     today_prefix = get_today_date_prefix()
     increment = get_next_increment()
@@ -426,8 +425,6 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}](on empty) - Decrease indentation[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}](twice at empty dot point) - Save and exit[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-    console.print()
-    console.print(f"[{MONOKAI['grey']}]Note: Commands automatically pull remote changes before running.[/{MONOKAI['grey']}]")
     console.print()
 
 
@@ -768,7 +765,6 @@ def list_entries(
 ) -> None:
     """Display the last n journal entries."""
     ensure_journal_dir()
-    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     
@@ -834,7 +830,6 @@ def open_file(
 ) -> None:
     """Open a journal entry by its ID from the status list."""
     ensure_journal_dir()
-    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     
@@ -953,7 +948,6 @@ def edit(
 ) -> None:
     """Open a journal entry in your system's default editor."""
     ensure_journal_dir()
-    check_and_pull_remote(silent=True)
     
     files = get_sorted_files(descending=True)
     

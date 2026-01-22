@@ -125,8 +125,6 @@ The `sync` command performs a full bidirectional sync:
 2. Commits all local changes with message format: `Log: YYYY-MM-DD`
 3. Pushes to remote
 
-**Auto-sync:** Commands like `new`, `list`, `open`, and `edit` automatically pull remote changes before running, keeping your dumps synced across devices.
-
 ### Show help
 
 ```bash
