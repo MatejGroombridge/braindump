@@ -38,7 +38,7 @@ MONOKAI = {
 }
 
 # Journal directory path
-JOURNAL_DIR = Path.home() / "braindump"
+JOURNAL_DIR = Path.home() / "dumps"
 
 
 def ensure_journal_dir() -> None:

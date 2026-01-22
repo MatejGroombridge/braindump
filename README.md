@@ -95,10 +95,10 @@ Runs `git add`, `commit` (with message "Log: YYYY-MM-DD"), and `push`.
 
 ## Configuration
 
-- Journal entries are stored in `~/braindump/`
+- Journal entries are stored in `~/dumps/`
 - On Windows, files open with the default application
 - On macOS/Linux, set the `$EDITOR` environment variable for the `new` and `open` commands
-- The braindump directory should be initialised as a git repository for the `sync` command
+- The dumps directory should be initialised as a git repository for the `sync` command
 
 ## Requirements
 
