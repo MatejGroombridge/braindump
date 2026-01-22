@@ -4,14 +4,18 @@ A CLI tool for managing markdown journal entries.
 
 ## Installation
 
+### From source
+
 ```bash
+git clone https://github.com/MatejGroombridge/braindump.git
+cd braindump
 pip install -e .
 ```
 
-Or install directly from Git:
+### Direct from GitHub
 
 ```bash
-pip install git+https://github.com/yourusername/braindump.git
+pip install git+https://github.com/MatejGroombridge/braindump.git
 ```
 
 After installation, ensure the Python Scripts folder is on your PATH:
