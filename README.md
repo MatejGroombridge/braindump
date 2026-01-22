@@ -55,13 +55,13 @@ Creates a file like `2026012201.md` with YAML frontmatter. Files are named `YYYY
 
 ### Editor Controls
 
-| Key      | Action                                 |
-| -------- | -------------------------------------- |
-| `Enter`  | New bullet at same indentation level   |
-| `Tab`    | Increase indentation                   |
-| `Enter`  | (on empty bullet) Decrease indentation |
-| `Enter`  | (twice at level 1) Save and exit       |
-| `Ctrl+X` | Cancel without saving                  |
+| Key      | Action                                         |
+| -------- | ---------------------------------------------- |
+| `Enter`  | New bullet at same indentation level           |
+| `Tab`    | Increase indentation                           |
+| `Enter`  | (on empty bullet) Decrease indentation         |
+| `Enter`  | (twice at empty bullet, level 1) Save and exit |
+| `Ctrl+X` | Cancel without saving                          |
 
 ### List entries
 
@@ -74,7 +74,8 @@ dump list 5                     # Show last 5 entries
 
 ```bash
 dump open                       # Open latest in terminal editor
-dump open 3                     # Open entry #3
+dump open 3                     # Open entry #3 in terminal editor
+dump edit                       # Open latest in external editor
 dump edit 3                     # Open entry #3 in external editor
 ```
 
@@ -86,13 +87,39 @@ dump tag 1 remove fitness
 dump tag 1 add health remove old
 ```
 
-### Other commands
+### Copy entries to clipboard
 
 ```bash
-dump synth 1                    # Toggle synthesised status
-dump delete 1                   # Delete entry
+dump copy                       # Copy latest entry to clipboard
 dump copy 3                     # Copy last 3 entries to clipboard
+```
+
+Copied entries include an intro line and are separated by horizontal rules.
+
+### Toggle synthesised status
+
+```bash
+dump synth 1                    # Toggle synthesised status of entry #1
+```
+
+### Delete an entry
+
+```bash
+dump delete 1                   # Delete entry #1
+```
+
+### Sync with git
+
+```bash
 dump sync                       # Git add, commit, push
+```
+
+Commits with message format: `Log: YYYY-MM-DD`
+
+### Show help
+
+```bash
+dump help                       # Show all commands and editor controls
 ```
 
 ## Configuration
