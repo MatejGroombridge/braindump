@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+braindump/__init__.py
+braindump/cli.py
+braindump.egg-info/PKG-INFO
+braindump.egg-info/SOURCES.txt
+braindump.egg-info/dependency_links.txt
+braindump.egg-info/entry_points.txt
+braindump.egg-info/requires.txt
+braindump.egg-info/top_level.txt

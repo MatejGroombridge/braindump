@@ -1,0 +1,84 @@
+Metadata-Version: 2.4
+Name: braindump
+Version: 0.1.0
+Summary: A CLI tool for managing markdown journal entries
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.9.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: pyperclip>=1.8.0
+Requires-Dist: pyyaml>=6.0
+
+# Braindump
+
+A CLI tool for managing markdown journal entries.
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+## Usage
+
+The tool is invoked using the `dump` command.
+
+### Create a new entry
+
+```bash
+# Create a new entry without tags
+dump new
+
+# Create a new entry with tags
+dump new health career personal
+```
+
+This creates a file like `2024012201.md` with YAML frontmatter:
+
+```yaml
+---
+date: 2024-01-22
+synthesised: false
+tags: [health, career, personal]
+---
+```
+
+### Synchronise with git
+
+```bash
+dump sync
+```
+
+Runs `git add`, `commit` (with message "Log: YYYY-MM-DD"), and `push`.
+
+### Copy entries to clipboard
+
+```bash
+# Copy the latest entry
+dump copy
+
+# Copy the latest 3 entries
+dump copy 3
+```
+
+### View status
+
+```bash
+dump status
+```
+
+Displays a table of the last 10 entries with filename, tags, and synthesised status.
+
+## Configuration
+
+- Journal entries are stored in `~/journal/`
+- Ensure `$EDITOR` environment variable is set for the `new` command to open files automatically
+- The journal directory should be initialised as a git repository for the `sync` command
+
+## Requirements
+
+- Python 3.9+
+- typer
+- rich
+- pyperclip
+- pyyaml
