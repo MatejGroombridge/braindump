@@ -1,2 +1,0 @@
-[console_scripts]
-dump = braindump.cli:app
