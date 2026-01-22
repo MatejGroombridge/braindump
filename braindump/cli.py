@@ -10,9 +10,16 @@ from typing import List, Optional
 import pyperclip
 import typer
 import yaml
-from prompt_toolkit import PromptSession
+from prompt_toolkit import Application
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, FormattedTextControl
+from prompt_toolkit.layout.controls import BufferControl
+from prompt_toolkit.layout.processors import Processor, Transformation
+from prompt_toolkit.lexers import Lexer
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -106,7 +113,7 @@ def format_frontmatter_display(filepath: Path, frontmatter_data: dict) -> tuple:
 
 
 def edit_in_terminal(filepath: Path) -> None:
-    """Open a file for editing in the terminal with bullet point indentation."""
+    """Open a file for editing in a full-screen bullet point editor."""
     content = filepath.read_text(encoding="utf-8")
     
     # Parse frontmatter
@@ -125,159 +132,316 @@ def edit_in_terminal(filepath: Path) -> None:
                 frontmatter_data = {}
             body = content[end_index + 3:].strip()
     
-    # Parse existing body into lines
-    lines = []
+    # Bullet point constants
+    BULLET = "\u2022 "
+    INDENT = "  "
+    MAX_LEVEL = 5
+    
+    # Parse existing body - convert markdown bullets to unicode bullets
+    initial_text = ""
     if body:
+        lines = []
         for line in body.split("\n"):
-            lines.append(line)
+            # Convert - to • for display
+            converted = line.replace("- ", "\u2022 ")
+            lines.append(converted)
+        initial_text = "\n".join(lines)
+    
+    # If empty, start with a bullet
+    if not initial_text.strip():
+        initial_text = BULLET
+    
+    # State for the editor
+    save_on_exit = [False]
+    
+    # Create key bindings
+    kb = KeyBindings()
+    
+    def get_current_line(buffer: Buffer) -> str:
+        """Get the current line text."""
+        doc = buffer.document
+        return doc.current_line
+    
+    def get_current_line_indent_level(buffer: Buffer) -> int:
+        """Get the indentation level of the current line."""
+        line = get_current_line(buffer)
+        # Count leading spaces (2 spaces per level)
+        stripped = line.lstrip(" ")
+        spaces = len(line) - len(stripped)
+        return (spaces // 2) + 1
+    
+    def set_line_indent(buffer: Buffer, new_level: int) -> None:
+        """Set the indentation level of the current line."""
+        doc = buffer.document
+        line = doc.current_line
+        
+        # Strip existing indent
+        stripped = line.lstrip(" ")
+        
+        # Build new indent
+        new_indent = INDENT * (new_level - 1)
+        new_line = new_indent + stripped
+        
+        # Calculate new cursor position
+        line_start = doc.cursor_position - doc.cursor_position_col
+        line_end = line_start + len(line)
+        
+        # Calculate where cursor should be in the new line
+        old_col = doc.cursor_position_col
+        old_indent_len = len(line) - len(stripped)
+        new_indent_len = len(new_indent)
+        
+        if old_col <= old_indent_len:
+            # Cursor was in indent area, move to after new indent
+            new_col = new_indent_len
+        else:
+            # Cursor was in content, adjust by indent difference
+            new_col = old_col + (new_indent_len - old_indent_len)
+        
+        # Replace the line
+        new_text = buffer.text[:line_start] + new_line + buffer.text[line_end:]
+        new_cursor = line_start + new_col
+        
+        buffer.set_document(Document(new_text, new_cursor))
+    
+    @kb.add(Keys.Tab)
+    def handle_tab(event):
+        """Tab increases indentation of current line (max 5 levels)."""
+        current_level = get_current_line_indent_level(event.current_buffer)
+        if current_level < MAX_LEVEL:
+            set_line_indent(event.current_buffer, current_level + 1)
+    
+    @kb.add(Keys.BackTab)  # Shift+Tab
+    def handle_shift_tab(event):
+        """Shift+Tab decreases indentation of current line."""
+        current_level = get_current_line_indent_level(event.current_buffer)
+        if current_level > 1:
+            set_line_indent(event.current_buffer, current_level - 1)
+    
+    @kb.add(Keys.Enter)
+    def handle_enter(event):
+        """Enter creates a new bullet at the same indentation level."""
+        buffer = event.current_buffer
+        doc = buffer.document
+        current_line = doc.current_line
+        
+        # Get current indentation level
+        stripped = current_line.lstrip(" ")
+        spaces = len(current_line) - len(stripped)
+        indent = " " * spaces
+        
+        # Check if current line is empty bullet (just "• " or indented "• ")
+        if stripped == BULLET.strip() or stripped == BULLET:
+            # Empty bullet - decrease indent or do nothing at level 1
+            current_level = (spaces // 2) + 1
+            if current_level > 1:
+                set_line_indent(buffer, current_level - 1)
+                return
+        
+        # Insert newline with bullet at same indent
+        new_bullet = "\n" + indent + BULLET
+        buffer.insert_text(new_bullet)
+    
+    @kb.add(Keys.Backspace)
+    def handle_backspace(event):
+        """Backspace: delete char, or merge with previous line if at line start after bullet."""
+        buffer = event.current_buffer
+        doc = buffer.document
+        
+        # If at the very beginning, do nothing
+        if doc.cursor_position == 0:
+            return
+        
+        current_line = doc.current_line
+        col = doc.cursor_position_col
+        
+        # Check if we're right after the bullet on this line
+        stripped = current_line.lstrip(" ")
+        indent_len = len(current_line) - len(stripped)
+        bullet_end = indent_len + len(BULLET)
+        
+        if col == bullet_end and stripped.startswith(BULLET):
+            # At start of content after bullet - delete the entire line and merge up
+            line_start = doc.cursor_position - col
+            
+            # Find the end of this line
+            rest = buffer.text[doc.cursor_position:]
+            newline_pos = rest.find("\n")
+            if newline_pos == -1:
+                line_end = len(buffer.text)
+            else:
+                line_end = doc.cursor_position + newline_pos
+            
+            # Get content after bullet on this line
+            content_after_bullet = current_line[bullet_end:]
+            
+            if line_start > 0:
+                # There's a previous line - merge content to it
+                # Remove the newline before this line and the bullet
+                prev_newline = line_start - 1
+                new_text = buffer.text[:prev_newline] + content_after_bullet + buffer.text[line_end:]
+                
+                # Find where to put cursor (end of previous line)
+                prev_line_start = buffer.text.rfind("\n", 0, prev_newline)
+                if prev_line_start == -1:
+                    prev_line_start = 0
+                else:
+                    prev_line_start += 1
+                prev_line_end = prev_newline
+                new_cursor = prev_line_end
+                
+                buffer.set_document(Document(new_text, new_cursor))
+            else:
+                # First line - just remove the bullet, keep content
+                if content_after_bullet:
+                    new_text = content_after_bullet + buffer.text[line_end:]
+                    buffer.set_document(Document(new_text, 0))
+                # If no content after bullet, don't delete the only bullet
+            return
+        
+        # Normal backspace - delete previous character
+        buffer.delete_before_cursor(1)
+    
+    @kb.add(Keys.ControlS)
+    def handle_save(event):
+        """Ctrl+S saves and exits."""
+        save_on_exit[0] = True
+        event.app.exit()
+    
+    @kb.add(Keys.ControlX)
+    def handle_cancel(event):
+        """Ctrl+X cancels without saving."""
+        save_on_exit[0] = False
+        event.app.exit()
+    
+    @kb.add(Keys.Escape)
+    def handle_escape(event):
+        """Escape cancels without saving."""
+        save_on_exit[0] = False
+        event.app.exit()
+    
+    # Create buffer with initial content
+    buffer = Buffer(
+        document=Document(initial_text, len(initial_text)),
+        multiline=True,
+    )
+    
+    # Build header text
+    if frontmatter_data:
+        file_id = get_file_id(filepath)
+        stem = filepath.stem
+        if len(stem) >= 8:
+            try:
+                date_str = f"{stem[6:8]}/{stem[4:6]}/{stem[0:4]}"
+            except (ValueError, IndexError):
+                date_str = frontmatter_data.get("date", "Unknown")
+        else:
+            date_str = frontmatter_data.get("date", "Unknown")
+        
+        synthesised = frontmatter_data.get("synthesised", False)
+        tags = frontmatter_data.get("tags", [])
+        
+        header_parts = [f"Brain Dump #{file_id}", f"Date: {date_str}"]
+        if tags:
+            if isinstance(tags, list):
+                header_parts.append(f"Tags: {', '.join(str(t) for t in tags)}")
+            else:
+                header_parts.append(f"Tags: {tags}")
+        header_text = "  |  ".join(header_parts)
+    else:
+        header_text = "New Brain Dump"
+    
+    # Status bar text
+    status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
+    
+    # Create the layout
+    layout = Layout(
+        HSplit([
+            # Header bar
+            Window(
+                content=FormattedTextControl(lambda: header_text),
+                height=1,
+                style="class:header",
+            ),
+            # Separator
+            Window(height=1, char="─", style="class:separator"),
+            # Main editor area
+            Window(
+                content=BufferControl(buffer=buffer),
+                wrap_lines=True,
+            ),
+            # Separator
+            Window(height=1, char="─", style="class:separator"),
+            # Status bar
+            Window(
+                content=FormattedTextControl(lambda: status_text),
+                height=1,
+                style="class:status",
+            ),
+        ])
+    )
+    
+    # Define styles (using Monokai colors)
+    style = Style.from_dict({
+        "header": "bg:#AB9DF2 #1e1e1e bold",
+        "separator": "#939293",
+        "status": "bg:#3e3e3e #A9DC76",
+    })
+    
+    # Create and run the application
+    app = Application(
+        layout=layout,
+        key_bindings=kb,
+        style=style,
+        full_screen=True,
+        mouse_support=True,
+    )
     
     console.print()
     
-    # Show formatted frontmatter
-    if frontmatter_data:
-        file_id, display_text = format_frontmatter_display(filepath, frontmatter_data)
-        console.print(Panel(display_text, title=f"Brain Dump #{file_id}", style=MONOKAI['violet'], expand=False))
-        console.print()
-    
-    # Bullet point editor
-    BULLET = "\u2022 "
-    INDENT = "  "
-    
-    edited_lines = []
-    current_level = 1
-    pending_exit = False  # Track if user pressed enter on empty level 1 bullet
-    
-    # Load existing content and display it (convert - to •)
-    if lines:
-        for line in lines:
-            if line.strip():
-                edited_lines.append(line)
-                # Display with • instead of -
-                display_line = line.replace("- ", "\u2022 ")
-                console.print(f"[{MONOKAI['white']}]{display_line}[/{MONOKAI['white']}]")
-    
     try:
-        while True:
-            # Build the prompt with current indentation
-            if pending_exit:
-                # Waiting for save confirmation - show empty line
-                prompt_display = ""
-            else:
-                indent_str = INDENT * (current_level - 1)
-                prompt_display = f"{indent_str}{BULLET}"
-            
-            # Create key bindings
-            kb = KeyBindings()
-            action = [None]  # Track what action was taken: 'tab', 'enter', or None
-            
-            @kb.add(Keys.Tab)
-            def handle_tab(event):
-                """Tab increases indentation immediately."""
-                action[0] = 'tab'
-                event.current_buffer.validate_and_handle()
-            
-            @kb.add(Keys.Enter)
-            def handle_enter(event):
-                """Enter submits or handles indentation."""
-                if event.current_buffer.text == "":
-                    action[0] = 'enter_empty'
-                else:
-                    action[0] = 'enter_text'
-                event.current_buffer.validate_and_handle()
-            
-            @kb.add(Keys.ControlX)
-            def handle_cancel(event):
-                """Ctrl+X cancels."""
-                action[0] = 'cancel'
-                event.current_buffer.validate_and_handle()
-            
-            # Create session for single line input
-            session = PromptSession(key_bindings=kb)
-            
-            try:
-                user_input = session.prompt(prompt_display)
-            except EOFError:
-                break
-            
-            # Handle actions
-            if action[0] == 'cancel':
-                # Ctrl+X - cancel and exit immediately
-                sys.stdout.write('\033[A\033[K')
-                sys.stdout.flush()
-                console.print()
-                console.print(f"[{MONOKAI['yellow']}]Cancelled. No changes saved.[/{MONOKAI['yellow']}]")
-                console.print()
-                return
-            
-            if action[0] == 'tab':
-                if pending_exit:
-                    # If in pending exit state and tab pressed, cancel exit and start new bullet
-                    pending_exit = False
-                    current_level = 2
-                    sys.stdout.write('\033[A\033[K')
-                    sys.stdout.flush()
-                    continue
-                # Tab - increase indentation, redraw on same line
-                current_level = min(current_level + 1, 5)
-                # Clear current line and continue (will redraw with new indent)
-                sys.stdout.write('\033[A\033[K')  # Move up and clear line
-                sys.stdout.flush()
+        app.run()
+    except (KeyboardInterrupt, EOFError):
+        save_on_exit[0] = False
+    
+    # Handle save
+    if save_on_exit[0]:
+        # Get final content from buffer
+        final_text = buffer.text
+        
+        # Clean up: remove empty bullets and trailing whitespace per line
+        edited_lines = []
+        for line in final_text.split("\n"):
+            stripped = line.rstrip()
+            # Skip completely empty lines
+            if not stripped:
                 continue
-            
-            elif action[0] == 'enter_empty':
-                if pending_exit:
-                    # Second enter - save and exit
-                    sys.stdout.write('\033[A\033[K')
-                    sys.stdout.flush()
-                    break
-                elif current_level == 1:
-                    # First enter on empty level 1 bullet - clear bullet, wait for confirm
-                    pending_exit = True
-                    sys.stdout.write('\033[A\033[K')
-                    sys.stdout.flush()
-                    continue
-                else:
-                    # Decrease indentation, redraw on same line
-                    current_level = max(1, current_level - 1)
-                    sys.stdout.write('\033[A\033[K')  # Move up and clear line
-                    sys.stdout.flush()
-                    continue
-            
-            elif action[0] == 'enter_text':
-                if pending_exit:
-                    # User typed something while in pending exit - cancel exit, add as L1 bullet
-                    pending_exit = False
-                    edited_lines.append(f"\u2022 {user_input}")
-                else:
-                    # Add the line with proper markdown formatting
-                    md_indent = "  " * (current_level - 1)
-                    edited_lines.append(f"{md_indent}\u2022 {user_input}")
-            
-            else:
-                # Fallback - treat as text entry
-                if user_input:
-                    pending_exit = False
-                    md_indent = "  " * (current_level - 1)
-                    edited_lines.append(f"{md_indent}\u2022 {user_input}")
+            # Skip lines that are just a bullet with no content
+            line_content = stripped.lstrip(" ")
+            if line_content == BULLET.strip() or line_content == BULLET.rstrip():
+                continue
+            edited_lines.append(stripped)
         
-        # Build final content
-        new_body = "\n".join(edited_lines)
-        
-        # Get original lines (stripped of empty lines)
-        original_lines = [l for l in lines if l.strip()]
+        # Get original lines for comparison
+        original_lines = []
+        if body:
+            for line in body.split("\n"):
+                stripped = line.rstrip()
+                if stripped:
+                    # Normalize to unicode bullets for comparison
+                    original_lines.append(stripped.replace("- ", "\u2022 "))
         
         # Check if content is unchanged
         if edited_lines == original_lines:
             if len(original_lines) == 0:
-                # This was a new empty file - delete it
+                # Empty new file - delete it
                 filepath.unlink()
-                console.print()
                 console.print(f"[{MONOKAI['yellow']}]Empty dump deleted.[/{MONOKAI['yellow']}]")
-                console.print()
-            else:
-                # No changes made to existing file
-                console.print()
+            console.print()
             return
+        
+        # Build final content
+        new_body = "\n".join(edited_lines)
         
         if frontmatter_raw:
             new_content = frontmatter_raw + "\n\n" + new_body + "\n"
@@ -285,12 +449,9 @@ def edit_in_terminal(filepath: Path) -> None:
             new_content = new_body + "\n"
         
         filepath.write_text(new_content, encoding="utf-8")
-        console.print()
         console.print(f"[{MONOKAI['green']}]Saved[/{MONOKAI['green']}] [{MONOKAI['cyan']}]{filepath.name}[/{MONOKAI['cyan']}]")
         console.print()
-        
-    except (KeyboardInterrupt, EOFError):
-        console.print()
+    else:
         console.print(f"[{MONOKAI['yellow']}]Cancelled. No changes saved.[/{MONOKAI['yellow']}]")
         console.print()
 
@@ -420,11 +581,14 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['cyan']}]pull[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Pull remote changes only[/{MONOKAI['grey']}]")
     console.print()
     console.print(f"[{MONOKAI['grey']}]Editor Controls:[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]New bullet at same level[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Arrow Keys[/{MONOKAI['orange']}] [{MONOKAI['grey']}]Navigate through the document[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]New bullet at same indentation level[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Tab[/{MONOKAI['orange']}]        [{MONOKAI['grey']}]Increase indentation[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}](on empty) - Decrease indentation[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}](twice at empty dot point) - Save and exit[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Shift+Tab[/{MONOKAI['orange']}]  [{MONOKAI['grey']}]Decrease indentation[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Backspace[/{MONOKAI['orange']}]  [{MONOKAI['grey']}]Delete character, or merge line at bullet start[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Escape[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
     console.print()
 
 
