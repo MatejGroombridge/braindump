@@ -1,6 +1,6 @@
 # Braindump
 
-A CLI tool for managing markdown journal entries.
+A CLI tool for managing markdown journal entries with a terminal-based bullet point editor.
 
 ## Installation
 
@@ -27,83 +27,81 @@ After installation, ensure the Python Scripts folder is on your PATH:
 
 ## Usage
 
-The tool is invoked using the `dump` command.
+The tool is invoked using the `dump` command. Run `dump help` for full command list and editor controls.
+
+### Commands
+
+| Command  | Description                    |
+| -------- | ------------------------------ |
+| `new`    | Create a new journal entry     |
+| `list`   | View recent entries            |
+| `open`   | Open entry in terminal editor  |
+| `edit`   | Open entry in external editor  |
+| `copy`   | Copy entries to clipboard      |
+| `tag`    | Add or remove tags             |
+| `synth`  | Toggle synthesised status      |
+| `delete` | Delete an entry                |
+| `sync`   | Synchronise with git           |
+| `help`   | Show all commands and controls |
 
 ### Create a new entry
 
 ```bash
-# Create a new entry (defaults to tag 'general')
-dump new
-
-# Create a new entry with tags
-dump new health career personal
+dump new                        # Create entry with no tags
+dump new health career          # Create entry with tags
 ```
 
-This creates a file like `2024012201.md` with YAML frontmatter:
+Creates a file like `2026012201.md` with YAML frontmatter. Files are named `YYYYMMDDXX.md` where `XX` auto-increments for multiple entries on the same day.
 
-```yaml
----
-date: 2024-01-22
-synthesised: false
-tags: [health, career, personal]
----
-```
+### Editor Controls
 
-Files are named `YYYYMMDDXX.md` where `XX` is an auto-incrementing number for multiple entries on the same day.
+| Key      | Action                                 |
+| -------- | -------------------------------------- |
+| `Enter`  | New bullet at same indentation level   |
+| `Tab`    | Increase indentation                   |
+| `Enter`  | (on empty bullet) Decrease indentation |
+| `Enter`  | (twice at level 1) Save and exit       |
+| `Ctrl+X` | Cancel without saving                  |
 
-### View status
+### List entries
 
 ```bash
-# Show last 10 entries (default)
-dump status
-
-# Show last 5 entries
-dump status 5
+dump list                       # Show last 10 entries
+dump list 5                     # Show last 5 entries
 ```
 
-Displays a table with columns: ID | Date | Tags | Synthesised
-
-### Open an entry
+### Open/Edit entries
 
 ```bash
-# Open the latest entry
-dump open
-
-# Open entry by ID (from status list)
-dump open 3
+dump open                       # Open latest in terminal editor
+dump open 3                     # Open entry #3
+dump edit 3                     # Open entry #3 in external editor
 ```
 
-### Copy entries to clipboard
+### Manage tags
 
 ```bash
-# Copy the latest entry
-dump copy
-
-# Copy the latest 3 entries
-dump copy 3
+dump tag 1 add health exercise
+dump tag 1 remove fitness
+dump tag 1 add health remove old
 ```
 
-Entries are separated by horizontal rules when copying multiple files.
-
-### Synchronise with git
+### Other commands
 
 ```bash
-dump sync
+dump synth 1                    # Toggle synthesised status
+dump delete 1                   # Delete entry
+dump copy 3                     # Copy last 3 entries to clipboard
+dump sync                       # Git add, commit, push
 ```
-
-Runs `git add`, `commit` (with message "Log: YYYY-MM-DD"), and `push`.
 
 ## Configuration
 
-- Journal entries are stored in `~/dumps/`
-- On Windows, files open with the default application
-- On macOS/Linux, set the `$EDITOR` environment variable for the `new` and `open` commands
-- The dumps directory should be initialised as a git repository for the `sync` command
+- Journal entries stored in `~/dumps/`
+- Date format: Jan 22, 2026
+- Monokai Pro colour scheme
 
 ## Requirements
 
 - Python 3.9+
-- typer
-- rich
-- pyperclip
-- pyyaml
+- typer, rich, pyperclip, pyyaml, prompt_toolkit
