@@ -1,6 +1,7 @@
 """Braindump CLI - Manage your markdown journal entries."""
 
 import os
+import platform
 import subprocess
 import sys
 from datetime import datetime
@@ -18,12 +19,16 @@ from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, FormattedTextControl
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import Processor, Transformation
+from prompt_toolkit.layout.dimension import LayoutDimension
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import print as rprint
+
+# Detect if running on macOS
+IS_MACOS = platform.system() == "Darwin"
 
 def show_main(ctx: typer.Context) -> None:
     """Show brief description when dump is called without a command."""
@@ -112,8 +117,11 @@ def format_frontmatter_display(filepath: Path, frontmatter_data: dict) -> tuple:
     return (file_id, "\n".join(lines))
 
 
-def edit_in_terminal(filepath: Path) -> None:
-    """Open a file for editing in a full-screen bullet point editor."""
+def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index: int = 0) -> Optional[Path]:
+    """Open a file for editing in a full-screen bullet point editor.
+    
+    Returns the next file to open if cycling, or None if done.
+    """
     content = filepath.read_text(encoding="utf-8")
     
     # Parse frontmatter
@@ -132,27 +140,71 @@ def edit_in_terminal(filepath: Path) -> None:
                 frontmatter_data = {}
             body = content[end_index + 3:].strip()
     
-    # Bullet point constants
-    BULLET = "\u2022 "
+    # Stylized bullet characters for different indentation levels
+    BULLET_CHARS = [
+        "\u2022",  # Level 1: • (bullet)
+        "\u25E6",  # Level 2: ◦ (white bullet)
+        "\u2023",  # Level 3: ‣ (triangular bullet)
+        "\u2043",  # Level 4: ⁃ (hyphen bullet)
+        "\u25AA",  # Level 5: ▪ (black small square)
+    ]
     INDENT = "  "
     MAX_LEVEL = 5
     
-    # Parse existing body - convert markdown bullets to unicode bullets
+    def get_bullet_for_level(level: int) -> str:
+        """Get the appropriate bullet character for an indentation level."""
+        idx = min(level - 1, len(BULLET_CHARS) - 1)
+        return BULLET_CHARS[idx] + " "
+    
+    def normalize_bullets(text: str) -> str:
+        """Convert any bullet character to the appropriate one based on indent level."""
+        lines = []
+        for line in text.split("\n"):
+            stripped = line.lstrip(" ")
+            spaces = len(line) - len(stripped)
+            level = (spaces // 2) + 1
+            
+            # Check if line starts with any bullet character
+            for bullet_char in BULLET_CHARS + ["\u2022", "-"]:
+                if stripped.startswith(bullet_char + " "):
+                    content = stripped[len(bullet_char) + 1:]
+                    new_bullet = get_bullet_for_level(level)
+                    lines.append(" " * spaces + new_bullet + content)
+                    break
+            else:
+                lines.append(line)
+        return "\n".join(lines)
+    
+    # Parse existing body - convert markdown bullets to styled unicode bullets
     initial_text = ""
     if body:
         lines = []
         for line in body.split("\n"):
-            # Convert - to • for display
-            converted = line.replace("- ", "\u2022 ")
-            lines.append(converted)
+            stripped = line.lstrip(" ")
+            spaces = len(line) - len(stripped)
+            level = (spaces // 2) + 1
+            
+            # Convert - or • to styled bullet
+            if stripped.startswith("- "):
+                content = stripped[2:]
+                bullet = get_bullet_for_level(level)
+                lines.append(" " * spaces + bullet + content)
+            elif stripped.startswith("\u2022 "):
+                content = stripped[2:]
+                bullet = get_bullet_for_level(level)
+                lines.append(" " * spaces + bullet + content)
+            else:
+                lines.append(line)
         initial_text = "\n".join(lines)
     
-    # If empty, start with a bullet
+    # If empty, start with a level 1 bullet
     if not initial_text.strip():
-        initial_text = BULLET
+        initial_text = get_bullet_for_level(1)
     
     # State for the editor
     save_on_exit = [False]
+    next_file = [None]  # For note cycling
+    last_enter_was_empty = [False]  # Track for double-enter save
     
     # Create key bindings
     kb = KeyBindings()
@@ -161,6 +213,21 @@ def edit_in_terminal(filepath: Path) -> None:
         """Get the current line text."""
         doc = buffer.document
         return doc.current_line
+    
+    def get_line_bullet_info(line: str) -> tuple:
+        """Extract bullet info from a line. Returns (indent_spaces, bullet_char, content)."""
+        stripped = line.lstrip(" ")
+        spaces = len(line) - len(stripped)
+        
+        for bullet_char in BULLET_CHARS:
+            if stripped.startswith(bullet_char + " "):
+                return (spaces, bullet_char, stripped[len(bullet_char) + 1:])
+        
+        # Fallback for markdown bullet
+        if stripped.startswith("- "):
+            return (spaces, "-", stripped[2:])
+        
+        return (spaces, None, stripped)
     
     def get_current_line_indent_level(buffer: Buffer) -> int:
         """Get the indentation level of the current line."""
@@ -171,16 +238,23 @@ def edit_in_terminal(filepath: Path) -> None:
         return (spaces // 2) + 1
     
     def set_line_indent(buffer: Buffer, new_level: int) -> None:
-        """Set the indentation level of the current line."""
+        """Set the indentation level of the current line with appropriate bullet."""
         doc = buffer.document
         line = doc.current_line
         
-        # Strip existing indent
-        stripped = line.lstrip(" ")
+        # Get current bullet info
+        spaces, old_bullet, content = get_line_bullet_info(line)
         
-        # Build new indent
+        # Build new line with correct bullet for new level
         new_indent = INDENT * (new_level - 1)
-        new_line = new_indent + stripped
+        new_bullet = get_bullet_for_level(new_level)
+        
+        if old_bullet is not None:
+            new_line = new_indent + new_bullet + content
+        else:
+            # No bullet found, just adjust indent
+            stripped = line.lstrip(" ")
+            new_line = new_indent + stripped
         
         # Calculate new cursor position
         line_start = doc.cursor_position - doc.cursor_position_col
@@ -188,19 +262,19 @@ def edit_in_terminal(filepath: Path) -> None:
         
         # Calculate where cursor should be in the new line
         old_col = doc.cursor_position_col
-        old_indent_len = len(line) - len(stripped)
-        new_indent_len = len(new_indent)
+        old_prefix_len = spaces + (len(old_bullet) + 1 if old_bullet else 0)
+        new_prefix_len = len(new_indent) + len(new_bullet)
         
-        if old_col <= old_indent_len:
-            # Cursor was in indent area, move to after new indent
-            new_col = new_indent_len
+        if old_col <= old_prefix_len:
+            # Cursor was in prefix area, move to after new prefix
+            new_col = new_prefix_len
         else:
-            # Cursor was in content, adjust by indent difference
-            new_col = old_col + (new_indent_len - old_indent_len)
+            # Cursor was in content, adjust by prefix difference
+            new_col = old_col + (new_prefix_len - old_prefix_len)
         
         # Replace the line
         new_text = buffer.text[:line_start] + new_line + buffer.text[line_end:]
-        new_cursor = line_start + new_col
+        new_cursor = line_start + max(0, min(new_col, len(new_line)))
         
         buffer.set_document(Document(new_text, new_cursor))
     
@@ -220,26 +294,46 @@ def edit_in_terminal(filepath: Path) -> None:
     
     @kb.add(Keys.Enter)
     def handle_enter(event):
-        """Enter creates a new bullet at the same indentation level."""
+        """Enter creates a new bullet at the same indentation level.
+        
+        Double-enter on empty level 1 bullet exits and saves.
+        """
         buffer = event.current_buffer
         doc = buffer.document
         current_line = doc.current_line
         
         # Get current indentation level
-        stripped = current_line.lstrip(" ")
-        spaces = len(current_line) - len(stripped)
+        spaces, bullet_char, content = get_line_bullet_info(current_line)
+        current_level = (spaces // 2) + 1
         indent = " " * spaces
         
-        # Check if current line is empty bullet (just "• " or indented "• ")
-        if stripped == BULLET.strip() or stripped == BULLET:
-            # Empty bullet - decrease indent or do nothing at level 1
-            current_level = (spaces // 2) + 1
-            if current_level > 1:
-                set_line_indent(buffer, current_level - 1)
-                return
+        # Check if current line is empty bullet
+        is_empty_bullet = bullet_char is not None and content.strip() == ""
         
-        # Insert newline with bullet at same indent
-        new_bullet = "\n" + indent + BULLET
+        if is_empty_bullet:
+            if current_level > 1:
+                # Decrease indent and reset double-enter tracker
+                set_line_indent(buffer, current_level - 1)
+                last_enter_was_empty[0] = False
+                return
+            else:
+                # Level 1 empty bullet - check for double-enter
+                if last_enter_was_empty[0]:
+                    # Second enter on empty level 1 - save and exit
+                    save_on_exit[0] = True
+                    event.app.exit()
+                    return
+                else:
+                    # First enter on empty level 1 - mark it
+                    last_enter_was_empty[0] = True
+                    return
+        
+        # Reset double-enter tracker since we're creating a new bullet
+        last_enter_was_empty[0] = False
+        
+        # Insert newline with bullet at same indent level
+        new_bullet_char = get_bullet_for_level(current_level)
+        new_bullet = "\n" + indent + new_bullet_char
         buffer.insert_text(new_bullet)
     
     @kb.add(Keys.Backspace)
@@ -247,6 +341,9 @@ def edit_in_terminal(filepath: Path) -> None:
         """Backspace: delete char, or merge with previous line if at line start after bullet."""
         buffer = event.current_buffer
         doc = buffer.document
+        
+        # Reset double-enter tracker on any edit
+        last_enter_was_empty[0] = False
         
         # If at the very beginning, do nothing
         if doc.cursor_position == 0:
@@ -256,69 +353,139 @@ def edit_in_terminal(filepath: Path) -> None:
         col = doc.cursor_position_col
         
         # Check if we're right after the bullet on this line
-        stripped = current_line.lstrip(" ")
-        indent_len = len(current_line) - len(stripped)
-        bullet_end = indent_len + len(BULLET)
+        spaces, bullet_char, content = get_line_bullet_info(current_line)
         
-        if col == bullet_end and stripped.startswith(BULLET):
-            # At start of content after bullet - delete the entire line and merge up
-            line_start = doc.cursor_position - col
+        if bullet_char is not None:
+            bullet_end = spaces + len(bullet_char) + 1  # +1 for the space after bullet
             
-            # Find the end of this line
-            rest = buffer.text[doc.cursor_position:]
-            newline_pos = rest.find("\n")
-            if newline_pos == -1:
-                line_end = len(buffer.text)
-            else:
-                line_end = doc.cursor_position + newline_pos
-            
-            # Get content after bullet on this line
-            content_after_bullet = current_line[bullet_end:]
-            
-            if line_start > 0:
-                # There's a previous line - merge content to it
-                # Remove the newline before this line and the bullet
-                prev_newline = line_start - 1
-                new_text = buffer.text[:prev_newline] + content_after_bullet + buffer.text[line_end:]
+            if col == bullet_end:
+                # At start of content after bullet - delete the entire line and merge up
+                line_start = doc.cursor_position - col
                 
-                # Find where to put cursor (end of previous line)
-                prev_line_start = buffer.text.rfind("\n", 0, prev_newline)
-                if prev_line_start == -1:
-                    prev_line_start = 0
+                # Find the end of this line
+                rest = buffer.text[doc.cursor_position:]
+                newline_pos = rest.find("\n")
+                if newline_pos == -1:
+                    line_end = len(buffer.text)
                 else:
-                    prev_line_start += 1
-                prev_line_end = prev_newline
-                new_cursor = prev_line_end
+                    line_end = doc.cursor_position + newline_pos
                 
-                buffer.set_document(Document(new_text, new_cursor))
-            else:
-                # First line - just remove the bullet, keep content
-                if content_after_bullet:
-                    new_text = content_after_bullet + buffer.text[line_end:]
-                    buffer.set_document(Document(new_text, 0))
-                # If no content after bullet, don't delete the only bullet
-            return
+                # Get content after bullet on this line
+                content_after_bullet = content
+                
+                if line_start > 0:
+                    # There's a previous line - merge content to it
+                    # Remove the newline before this line and the bullet
+                    prev_newline = line_start - 1
+                    new_text = buffer.text[:prev_newline] + content_after_bullet + buffer.text[line_end:]
+                    
+                    # Find where to put cursor (end of previous line)
+                    prev_line_start = buffer.text.rfind("\n", 0, prev_newline)
+                    if prev_line_start == -1:
+                        prev_line_start = 0
+                    else:
+                        prev_line_start += 1
+                    prev_line_end = prev_newline
+                    new_cursor = prev_line_end
+                    
+                    buffer.set_document(Document(new_text, new_cursor))
+                else:
+                    # First line - just remove the bullet, keep content
+                    if content_after_bullet:
+                        new_text = content_after_bullet + buffer.text[line_end:]
+                        buffer.set_document(Document(new_text, 0))
+                    # If no content after bullet, don't delete the only bullet
+                return
         
         # Normal backspace - delete previous character
         buffer.delete_before_cursor(1)
     
-    @kb.add(Keys.ControlS)
-    def handle_save(event):
-        """Ctrl+S saves and exits."""
-        save_on_exit[0] = True
-        event.app.exit()
+    # Save keybinding - Cmd+S on Mac, Ctrl+S elsewhere
+    if IS_MACOS:
+        @kb.add("c-s")  # Cmd+S maps to c-s in prompt_toolkit on macOS
+        def handle_save_mac(event):
+            """Cmd+S saves and exits."""
+            save_on_exit[0] = True
+            event.app.exit()
+    else:
+        @kb.add(Keys.ControlS)
+        def handle_save(event):
+            """Ctrl+S saves and exits."""
+            save_on_exit[0] = True
+            event.app.exit()
     
-    @kb.add(Keys.ControlX)
-    def handle_cancel(event):
-        """Ctrl+X cancels without saving."""
-        save_on_exit[0] = False
-        event.app.exit()
+    # Cancel keybinding - Cmd+X on Mac, Ctrl+X elsewhere  
+    if IS_MACOS:
+        @kb.add("c-x")  # Cmd+X maps to c-x in prompt_toolkit on macOS
+        def handle_cancel_mac(event):
+            """Cmd+X cancels without saving."""
+            save_on_exit[0] = False
+            event.app.exit()
+    else:
+        @kb.add(Keys.ControlX)
+        def handle_cancel(event):
+            """Ctrl+X cancels without saving."""
+            save_on_exit[0] = False
+            event.app.exit()
     
     @kb.add(Keys.Escape)
     def handle_escape(event):
         """Escape cancels without saving."""
         save_on_exit[0] = False
         event.app.exit()
+    
+    # Note cycling - Cmd+[ and Cmd+] on Mac, Ctrl+[ and Ctrl+] elsewhere
+    if all_files and len(all_files) > 1:
+        @kb.add("c-]" if IS_MACOS else Keys.ControlSquareClose)
+        def handle_next_note(event):
+            """Cycle to next note."""
+            save_on_exit[0] = True
+            next_idx = (current_index + 1) % len(all_files)
+            next_file[0] = all_files[next_idx]
+            event.app.exit()
+        
+        @kb.add("c-[" if IS_MACOS else Keys.ControlSquareOpen)
+        def handle_prev_note(event):
+            """Cycle to previous note."""
+            save_on_exit[0] = True
+            next_idx = (current_index - 1) % len(all_files)
+            next_file[0] = all_files[next_idx]
+            event.app.exit()
+    
+    @kb.add(Keys.Down)
+    def handle_down_arrow(event):
+        """Down arrow - move down or create new bullet if at end."""
+        buffer = event.current_buffer
+        doc = buffer.document
+        
+        # Check if we're on the last line
+        lines = buffer.text.split("\n")
+        current_line_num = doc.text_before_cursor.count("\n")
+        
+        if current_line_num >= len(lines) - 1:
+            # On the last line - create a new bullet
+            current_line = doc.current_line
+            spaces, bullet_char, _ = get_line_bullet_info(current_line)
+            current_level = (spaces // 2) + 1
+            indent = " " * spaces
+            
+            # Move cursor to end of line first
+            buffer.cursor_position = len(buffer.text)
+            
+            # Insert newline with bullet at same indent level
+            new_bullet_char = get_bullet_for_level(current_level)
+            new_bullet = "\n" + indent + new_bullet_char
+            buffer.insert_text(new_bullet)
+        else:
+            # Not on last line - use natural down navigation
+            # Move down accounting for visual wrapping
+            buffer.cursor_down()
+    
+    @kb.add(Keys.Up)
+    def handle_up_arrow(event):
+        """Up arrow - move up accounting for visual line wrapping."""
+        buffer = event.current_buffer
+        buffer.cursor_up()
     
     # Create buffer with initial content
     buffer = Buffer(
@@ -351,8 +518,15 @@ def edit_in_terminal(filepath: Path) -> None:
     else:
         header_text = "New Brain Dump"
     
-    # Status bar text
-    status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
+    # Status bar text with platform-appropriate keybindings
+    if IS_MACOS:
+        status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  Tab: Indent  |  ⇧Tab: Unindent "
+        if all_files and len(all_files) > 1:
+            status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  ⌘]/⌘[: Next/Prev Note  |  Tab/⇧Tab: Indent "
+    else:
+        status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
+        if all_files and len(all_files) > 1:
+            status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Ctrl+]/[: Next/Prev  |  Tab: Indent "
     
     # Create the layout
     layout = Layout(
@@ -418,27 +592,45 @@ def edit_in_terminal(filepath: Path) -> None:
                 continue
             # Skip lines that are just a bullet with no content
             line_content = stripped.lstrip(" ")
-            if line_content == BULLET.strip() or line_content == BULLET.rstrip():
+            is_empty_bullet = False
+            for bullet_char in BULLET_CHARS:
+                if line_content == bullet_char or line_content == bullet_char + " ":
+                    is_empty_bullet = True
+                    break
+            if is_empty_bullet:
                 continue
             edited_lines.append(stripped)
         
-        # Get original lines for comparison
+        # Get original lines for comparison (normalize all bullet types)
+        def normalize_line(ln: str) -> str:
+            """Normalize a line for comparison by converting bullets to standard form."""
+            s = ln.rstrip()
+            content = s.lstrip(" ")
+            spaces = len(s) - len(content)
+            # Check for any bullet type and normalize to •
+            for bc in BULLET_CHARS + ["-"]:
+                if content.startswith(bc + " "):
+                    return " " * spaces + "\u2022 " + content[len(bc) + 1:]
+            return s
+        
         original_lines = []
         if body:
             for line in body.split("\n"):
                 stripped = line.rstrip()
                 if stripped:
-                    # Normalize to unicode bullets for comparison
-                    original_lines.append(stripped.replace("- ", "\u2022 "))
+                    original_lines.append(normalize_line(stripped))
+        
+        edited_normalized = [normalize_line(ln) for ln in edited_lines]
         
         # Check if content is unchanged
-        if edited_lines == original_lines:
+        if edited_normalized == original_lines:
             if len(original_lines) == 0:
                 # Empty new file - delete it
                 filepath.unlink()
                 console.print(f"[{MONOKAI['yellow']}]Empty dump deleted.[/{MONOKAI['yellow']}]")
-            console.print()
-            return
+            if not next_file[0]:
+                console.print()
+            return next_file[0]
         
         # Build final content
         new_body = "\n".join(edited_lines)
@@ -450,10 +642,13 @@ def edit_in_terminal(filepath: Path) -> None:
         
         filepath.write_text(new_content, encoding="utf-8")
         console.print(f"[{MONOKAI['green']}]Saved[/{MONOKAI['green']}] [{MONOKAI['cyan']}]{filepath.name}[/{MONOKAI['cyan']}]")
-        console.print()
+        if not next_file[0]:
+            console.print()
     else:
         console.print(f"[{MONOKAI['yellow']}]Cancelled. No changes saved.[/{MONOKAI['yellow']}]")
         console.print()
+    
+    return next_file[0]
 
 
 def get_sorted_files(descending: bool = True) -> List[Path]:
@@ -573,7 +768,7 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['cyan']}]open[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Open an entry in terminal editor[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]edit[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Open an entry in external editor[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]list[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]View recent entries[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['cyan']}]copy[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Copy entries to clipboard[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['cyan']}]copy[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Copy specific entries by ID to clipboard[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]tag[/{MONOKAI['cyan']}]        [{MONOKAI['grey']}]Add or remove tags[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]synth[/{MONOKAI['cyan']}]      [{MONOKAI['grey']}]Toggle synthesised status[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['cyan']}]delete[/{MONOKAI['cyan']}]     [{MONOKAI['grey']}]Delete an entry[/{MONOKAI['grey']}]")
@@ -581,14 +776,21 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['cyan']}]pull[/{MONOKAI['cyan']}]       [{MONOKAI['grey']}]Pull remote changes only[/{MONOKAI['grey']}]")
     console.print()
     console.print(f"[{MONOKAI['grey']}]Editor Controls:[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Arrow Keys[/{MONOKAI['orange']}] [{MONOKAI['grey']}]Navigate through the document[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]New bullet at same indentation level[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Tab[/{MONOKAI['orange']}]        [{MONOKAI['grey']}]Increase indentation[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Shift+Tab[/{MONOKAI['orange']}]  [{MONOKAI['grey']}]Decrease indentation[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Backspace[/{MONOKAI['orange']}]  [{MONOKAI['grey']}]Delete character, or merge line at bullet start[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-    console.print(f"  [{MONOKAI['orange']}]Escape[/{MONOKAI['orange']}]     [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Arrow Keys[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Navigate (accounts for text wrapping)[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Down Arrow[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Move down, or create new bullet at end[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Enter[/{MONOKAI['orange']}]        [{MONOKAI['grey']}]New bullet (2x Enter on empty L1 bullet = save)[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Tab[/{MONOKAI['orange']}]          [{MONOKAI['grey']}]Increase indentation[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Shift+Tab[/{MONOKAI['orange']}]    [{MONOKAI['grey']}]Decrease indentation[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Backspace[/{MONOKAI['orange']}]    [{MONOKAI['grey']}]Delete character, or merge line at bullet start[/{MONOKAI['grey']}]")
+    if IS_MACOS:
+        console.print(f"  [{MONOKAI['orange']}]⌘S[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]⌘X[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]⌘] / ⌘[[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
+    else:
+        console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]Ctrl+] / [[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Escape[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
     console.print()
 
 
@@ -876,12 +1078,12 @@ def pull() -> None:
 
 @app.command()
 def copy(
-    n: int = typer.Argument(
-        1,
-        help="Number of files to copy (default: 1)",
+    ids: List[int] = typer.Argument(
+        None,
+        help="IDs of files to copy (e.g., 'dump copy 1 3 6 7'). Copies latest if none provided.",
     ),
 ) -> None:
-    """Copy the latest n journal entries to clipboard."""
+    """Copy specific journal entries by ID to clipboard."""
     ensure_journal_dir()
     
     files = get_sorted_files(descending=True)
@@ -890,12 +1092,22 @@ def copy(
         print_padded(f"[{MONOKAI['yellow']}]No journal files found.[/{MONOKAI['yellow']}]")
         raise typer.Exit(1)
     
-    # Take top n files
-    files_to_copy = files[:n]
+    # If no IDs provided, default to copying the latest (ID 1)
+    if not ids:
+        ids = [1]
+    
+    # Validate all IDs
+    invalid_ids = [i for i in ids if i < 1 or i > len(files)]
+    if invalid_ids:
+        print_padded(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Invalid ID(s): {', '.join(map(str, invalid_ids))}. Valid range: 1-{len(files)}")
+        raise typer.Exit(1)
+    
+    # Get files by IDs (1-indexed)
+    files_to_copy = [files[i - 1] for i in ids]
     
     # Concatenate content with horizontal rules and add ID metadata
     contents = []
-    for idx, f in enumerate(files_to_copy, start=1):
+    for file_id, f in zip(ids, files_to_copy):
         content = f.read_text(encoding="utf-8")
         # Insert ID into frontmatter
         if content.startswith("---"):
@@ -904,17 +1116,21 @@ def copy(
                 # Insert id after the opening ---
                 frontmatter_content = content[3:end_index]
                 rest_of_file = content[end_index:]
-                content = f"---\nid: {idx}{frontmatter_content}{rest_of_file}"
+                content = f"---\nid: {file_id}{frontmatter_content}{rest_of_file}"
         contents.append(content)
     
     # Add intro text and combine with horizontal rules
-    intro = f"Here is a copy of my {n} latest journalling brain dumps:"
+    id_str = ", ".join(map(str, ids))
+    intro = f"Here is a copy of my brain dump(s) #{id_str}:"
     combined = intro + "\n\n---\n\n" + "\n\n---\n\n".join(contents)
     
     # Copy to clipboard
     try:
         pyperclip.copy(combined)
-        print_padded(f"[{MONOKAI['green']}]Copied latest {n} file{'s' if n > 1 else ''} to clipboard.[/{MONOKAI['green']}]")
+        if len(ids) == 1:
+            print_padded(f"[{MONOKAI['green']}]Copied dump #{ids[0]} to clipboard.[/{MONOKAI['green']}]")
+        else:
+            print_padded(f"[{MONOKAI['green']}]Copied dumps #{id_str} to clipboard.[/{MONOKAI['green']}]")
     except pyperclip.PyperclipException as e:
         print_padded(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Failed to copy to clipboard: {e}")
         raise typer.Exit(1)
@@ -992,7 +1208,10 @@ def open_file(
         help="ID of the file to open (from 'dump list'). Opens latest if not provided.",
     ),
 ) -> None:
-    """Open a journal entry by its ID from the status list."""
+    """Open a journal entry by its ID from the status list.
+    
+    Use Cmd+]/Cmd+[ (Mac) or Ctrl+]/Ctrl+[ to cycle between notes.
+    """
     ensure_journal_dir()
     
     files = get_sorted_files(descending=True)
@@ -1010,9 +1229,16 @@ def open_file(
     
     # Get file by ID (1-indexed)
     filepath = files[file_id - 1]
+    current_index = file_id - 1
     
-    # Open in terminal editor
-    edit_in_terminal(filepath)
+    # Open in terminal editor with cycling support
+    while filepath:
+        next_filepath = edit_in_terminal(filepath, all_files=files, current_index=current_index)
+        if next_filepath:
+            filepath = next_filepath
+            current_index = files.index(next_filepath)
+        else:
+            break
 
 
 @app.command(name="synth")
