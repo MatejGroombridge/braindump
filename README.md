@@ -35,19 +35,19 @@ The tool is invoked using the `dump` command. Run `dump help` for full command l
 
 ### Commands
 
-| Command  | Description                    |
-| -------- | ------------------------------ |
-| `new`    | Create a new journal entry     |
-| `list`   | View recent entries            |
-| `open`   | Open entry in terminal editor  |
-| `edit`   | Open entry in external editor  |
-| `copy`   | Copy entries to clipboard      |
-| `tag`    | Add or remove tags             |
-| `synth`  | Toggle synthesised status      |
-| `delete` | Delete an entry                |
-| `sync`   | Pull, commit and push with git |
-| `pull`   | Pull remote changes only       |
-| `help`   | Show all commands and controls |
+| Command  | Description                                       |
+| -------- | ------------------------------------------------- |
+| `new`    | Create a new journal entry                        |
+| `list`   | View recent entries                               |
+| `open`   | Open entry in terminal editor (with note cycling) |
+| `edit`   | Open entry in external editor                     |
+| `copy`   | Copy specific entries by ID to clipboard          |
+| `tag`    | Add or remove tags                                |
+| `synth`  | Toggle synthesised status                         |
+| `delete` | Delete an entry                                   |
+| `sync`   | Pull, commit and push with git                    |
+| `pull`   | Pull remote changes only                          |
+| `help`   | Show all commands and controls                    |
 
 ### Create a new entry
 
@@ -60,13 +60,35 @@ Creates a file like `2026012201.md` with YAML frontmatter. Files are named `YYYY
 
 ### Editor Controls
 
-| Key      | Action                                         |
-| -------- | ---------------------------------------------- |
-| `Enter`  | New bullet at same indentation level           |
-| `Tab`    | Increase indentation                           |
-| `Enter`  | (on empty bullet) Decrease indentation         |
-| `Enter`  | (twice at empty bullet, level 1) Save and exit |
-| `Ctrl+X` | Cancel without saving                          |
+| Key             | Action                                     |
+| --------------- | ------------------------------------------ |
+| Arrow Keys      | Navigate (accounts for text wrapping)      |
+| `↓` at end      | Create new bullet point                    |
+| `Enter`         | New bullet at same indentation level       |
+| `Tab`           | Increase indentation                       |
+| `Shift+Tab`     | Decrease indentation                       |
+| `Enter`         | (on empty bullet) Decrease indentation     |
+| `Enter` ×2      | (on empty L1 bullet) Save and exit         |
+| `Backspace`     | Delete char, or merge line at bullet start |
+| `⌘S` / `Ctrl+S` | Save and exit                              |
+| `⌘X` / `Ctrl+X` | Cancel without saving                      |
+| `⌘]` / `Ctrl+]` | Cycle to next note                         |
+| `⌘[` / `Ctrl+[` | Cycle to previous note                     |
+| `Escape`        | Cancel without saving                      |
+
+> **Note:** On macOS, use `⌘` (Command). On Windows/Linux, use `Ctrl`.
+
+### Stylized Bullets
+
+Different bullet characters are used for each indentation level:
+
+```
+• Level 1
+  ◦ Level 2
+    ‣ Level 3
+      ⁃ Level 4
+        ▪ Level 5
+```
 
 ### List entries
 
@@ -96,7 +118,7 @@ dump tag 1 add health remove old
 
 ```bash
 dump copy                       # Copy latest entry to clipboard
-dump copy 3                     # Copy last 3 entries to clipboard
+dump copy 1 3 6                 # Copy specific entries by ID
 ```
 
 Copied entries include an intro line and are separated by horizontal rules.
