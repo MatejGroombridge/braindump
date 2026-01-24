@@ -434,9 +434,9 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
         save_on_exit[0] = False
         event.app.exit()
     
-    # Note cycling - Cmd+[ and Cmd+] on Mac, Ctrl+[ and Ctrl+] elsewhere
+    # Note cycling - Ctrl+N/Ctrl+P for next/previous note
     if all_files and len(all_files) > 1:
-        @kb.add("c-]" if IS_MACOS else Keys.ControlSquareClose)
+        @kb.add("c-n")
         def handle_next_note(event):
             """Cycle to next note."""
             save_on_exit[0] = True
@@ -444,7 +444,7 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
             next_file[0] = all_files[next_idx]
             event.app.exit()
         
-        @kb.add("c-[" if IS_MACOS else Keys.ControlSquareOpen)
+        @kb.add("c-p")
         def handle_prev_note(event):
             """Cycle to previous note."""
             save_on_exit[0] = True
@@ -522,11 +522,11 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
     if IS_MACOS:
         status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  Tab: Indent  |  ⇧Tab: Unindent "
         if all_files and len(all_files) > 1:
-            status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  ⌘]/⌘[: Next/Prev Note  |  Tab/⇧Tab: Indent "
+            status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  ^N/^P: Next/Prev Note  |  Tab/⇧Tab: Indent "
     else:
         status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
         if all_files and len(all_files) > 1:
-            status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Ctrl+]/[: Next/Prev  |  Tab: Indent "
+            status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Ctrl+N/P: Next/Prev  |  Tab: Indent "
     
     # Create the layout
     layout = Layout(
@@ -785,11 +785,11 @@ def show_help() -> None:
     if IS_MACOS:
         console.print(f"  [{MONOKAI['orange']}]⌘S[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
         console.print(f"  [{MONOKAI['orange']}]⌘X[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]⌘] / ⌘[[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]^N / ^P[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
     else:
         console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
         console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]Ctrl+] / [[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
+        console.print(f"  [{MONOKAI['orange']}]Ctrl+N / P[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Escape[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
     console.print()
 
@@ -1210,7 +1210,7 @@ def open_file(
 ) -> None:
     """Open a journal entry by its ID from the status list.
     
-    Use Cmd+]/Cmd+[ (Mac) or Ctrl+]/Ctrl+[ to cycle between notes.
+    Use Ctrl+N/Ctrl+P to cycle between notes.
     """
     ensure_journal_dir()
     

@@ -72,11 +72,11 @@ Creates a file like `2026012201.md` with YAML frontmatter. Files are named `YYYY
 | `Backspace`     | Delete char, or merge line at bullet start |
 | `⌘S` / `Ctrl+S` | Save and exit                              |
 | `⌘X` / `Ctrl+X` | Cancel without saving                      |
-| `⌘]` / `Ctrl+]` | Cycle to next note                         |
-| `⌘[` / `Ctrl+[` | Cycle to previous note                     |
+| `Ctrl+N`        | Cycle to next note                         |
+| `Ctrl+P`        | Cycle to previous note                     |
 | `Escape`        | Cancel without saving                      |
 
-> **Note:** On macOS, use `⌘` (Command). On Windows/Linux, use `Ctrl`.
+> **Note:** On macOS, use `⌘` (Command) for save/cancel. `Ctrl+N/P` works on all platforms.
 
 ### Stylized Bullets
 
