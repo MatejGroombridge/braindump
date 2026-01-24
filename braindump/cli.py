@@ -321,6 +321,9 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
                 if last_enter_was_empty[0]:
                     # Second enter on empty level 1 - save and exit
                     save_on_exit[0] = True
+                    console.print()
+                    console.print(f"[{MONOKAI['green']}]Exited[/{MONOKAI['green']}] [{MONOKAI['cyan']}]{filepath.name}[/{MONOKAI['cyan']}]")
+                    console.print()
                     event.app.exit()
                     return
                 else:
