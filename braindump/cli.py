@@ -36,7 +36,7 @@ def show_main(ctx: typer.Context) -> None:
         console.print()
         console.print(f"[{MONOKAI['violet']}]Braindump[/{MONOKAI['violet']}] - A CLI tool for managing markdown journal entries. Type[{MONOKAI['cyan']}] dump help[/{MONOKAI['cyan']}] for instructions.")
         console.print()
-        console.print(f"[bold {MONOKAI['grey']}]By Matej Groombridge, Jan 2026.[bold /{MONOKAI['grey']}]")
+        console.print(f"[bold {MONOKAI['grey']}]By Matej Groombridge, Jan 2026. v1.3[bold /{MONOKAI['grey']}]")
         console.print()
 
 
