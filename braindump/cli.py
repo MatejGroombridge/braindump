@@ -403,33 +403,19 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
         # Normal backspace - delete previous character
         buffer.delete_before_cursor(1)
     
-    # Save keybinding - Cmd+S on Mac, Ctrl+S elsewhere
-    if IS_MACOS:
-        @kb.add("c-s")  # Cmd+S maps to c-s in prompt_toolkit on macOS
-        def handle_save_mac(event):
-            """Cmd+S saves and exits."""
-            save_on_exit[0] = True
-            event.app.exit()
-    else:
-        @kb.add(Keys.ControlS)
-        def handle_save(event):
-            """Ctrl+S saves and exits."""
-            save_on_exit[0] = True
-            event.app.exit()
+    # Save keybinding - Ctrl+S on all platforms
+    @kb.add(Keys.ControlS)
+    def handle_save(event):
+        """Ctrl+S saves and exits."""
+        save_on_exit[0] = True
+        event.app.exit()
     
-    # Cancel keybinding - Cmd+X on Mac, Ctrl+X elsewhere  
-    if IS_MACOS:
-        @kb.add("c-x")  # Cmd+X maps to c-x in prompt_toolkit on macOS
-        def handle_cancel_mac(event):
-            """Cmd+X cancels without saving."""
-            save_on_exit[0] = False
-            event.app.exit()
-    else:
-        @kb.add(Keys.ControlX)
-        def handle_cancel(event):
-            """Ctrl+X cancels without saving."""
-            save_on_exit[0] = False
-            event.app.exit()
+    # Cancel keybinding - Ctrl+X on all platforms
+    @kb.add(Keys.ControlX)
+    def handle_cancel(event):
+        """Ctrl+X cancels without saving."""
+        save_on_exit[0] = False
+        event.app.exit()
     
     @kb.add(Keys.Escape)
     def handle_escape(event):
@@ -457,7 +443,7 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
     
     @kb.add(Keys.Down)
     def handle_down_arrow(event):
-        """Down arrow - move down or create new bullet if at end."""
+        """Down arrow - move down or create new bullet if at end (unless current bullet is empty at level 1)."""
         buffer = event.current_buffer
         doc = buffer.document
         
@@ -466,10 +452,16 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
         current_line_num = doc.text_before_cursor.count("\n")
         
         if current_line_num >= len(lines) - 1:
-            # On the last line - create a new bullet
+            # On the last line - check if current bullet is empty
             current_line = doc.current_line
-            spaces, bullet_char, _ = get_line_bullet_info(current_line)
+            spaces, bullet_char, content = get_line_bullet_info(current_line)
             current_level = (spaces // 2) + 1
+            
+            # Don't create a new line if on an empty level 1 bullet
+            is_empty_bullet = bullet_char is not None and content.strip() == ""
+            if is_empty_bullet and current_level == 1:
+                return
+            
             indent = " " * spaces
             
             # Move cursor to end of line first
@@ -521,15 +513,10 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
     else:
         header_text = "New Brain Dump"
     
-    # Status bar text with platform-appropriate keybindings
-    if IS_MACOS:
-        status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  Tab: Indent  |  ⇧Tab: Unindent "
-        if all_files and len(all_files) > 1:
-            status_text = " ⌘S: Save  |  ⌘X/Esc: Cancel  |  ^N/^P: Next/Prev Note  |  Tab/⇧Tab: Indent "
-    else:
-        status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
-        if all_files and len(all_files) > 1:
-            status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Ctrl+N/P: Next/Prev  |  Tab: Indent "
+    # Status bar text - unified keybindings for all platforms
+    status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Tab: Indent  |  Shift+Tab: Unindent "
+    if all_files and len(all_files) > 1:
+        status_text = " Ctrl+S: Save  |  Ctrl+X/Esc: Cancel  |  Ctrl+N/P: Next/Prev  |  Tab: Indent "
     
     # Create the layout
     layout = Layout(
@@ -648,7 +635,7 @@ def edit_in_terminal(filepath: Path, all_files: List[Path] = None, current_index
         if not next_file[0]:
             console.print()
     else:
-        console.print(f"[{MONOKAI['yellow']}]Cancelled. No changes saved.[/{MONOKAI['yellow']}]")
+        console.print(f"[{MONOKAI['yellow']}]Exited[/{MONOKAI['yellow']}] [{MONOKAI['cyan']}]{filepath.name}[/{MONOKAI['cyan']}] [{MONOKAI['yellow']}]without saving.[/{MONOKAI['yellow']}]")
         console.print()
     
     return next_file[0]
@@ -758,8 +745,21 @@ synthesised: false
     # Write the file
     filepath.write_text(frontmatter, encoding="utf-8")
     
-    # Open in terminal editor
-    edit_in_terminal(filepath)
+    console.print()
+    console.print(f"[{MONOKAI['green']}]Created[/{MONOKAI['green']}] [{MONOKAI['cyan']}]{filepath.name}[/{MONOKAI['cyan']}]")
+    
+    # Get all files for cycling support
+    files = get_sorted_files(descending=True)
+    current_index = files.index(filepath) if filepath in files else 0
+    
+    # Open in terminal editor with cycling support
+    while filepath:
+        next_filepath = edit_in_terminal(filepath, all_files=files, current_index=current_index)
+        if next_filepath:
+            filepath = next_filepath
+            current_index = files.index(next_filepath)
+        else:
+            break
 
 
 @app.command(name="help")
@@ -785,14 +785,9 @@ def show_help() -> None:
     console.print(f"  [{MONOKAI['orange']}]Tab[/{MONOKAI['orange']}]          [{MONOKAI['grey']}]Increase indentation[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Shift+Tab[/{MONOKAI['orange']}]    [{MONOKAI['grey']}]Decrease indentation[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Backspace[/{MONOKAI['orange']}]    [{MONOKAI['grey']}]Delete character, or merge line at bullet start[/{MONOKAI['grey']}]")
-    if IS_MACOS:
-        console.print(f"  [{MONOKAI['orange']}]⌘S[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]⌘X[/{MONOKAI['orange']}]           [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]^N / ^P[/{MONOKAI['orange']}]      [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
-    else:
-        console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
-        console.print(f"  [{MONOKAI['orange']}]Ctrl+N / P[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Ctrl+S[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Save and exit[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Ctrl+X[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
+    console.print(f"  [{MONOKAI['orange']}]Ctrl+N / P[/{MONOKAI['orange']}]   [{MONOKAI['grey']}]Cycle to next/previous note[/{MONOKAI['grey']}]")
     console.print(f"  [{MONOKAI['orange']}]Escape[/{MONOKAI['orange']}]       [{MONOKAI['grey']}]Cancel without saving[/{MONOKAI['grey']}]")
     console.print()
 
@@ -1105,12 +1100,14 @@ def copy(
         print_padded(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Invalid ID(s): {', '.join(map(str, invalid_ids))}. Valid range: 1-{len(files)}")
         raise typer.Exit(1)
     
-    # Get files by IDs (1-indexed)
+    # Get files by IDs (1-indexed) and sort oldest to newest
     files_to_copy = [files[i - 1] for i in ids]
+    ids_with_files = list(zip(ids, files_to_copy))
+    ids_with_files.sort(key=lambda x: x[1].name)  # Sort by filename (oldest first)
     
     # Concatenate content with horizontal rules and add ID metadata
     contents = []
-    for file_id, f in zip(ids, files_to_copy):
+    for file_id, f in ids_with_files:
         content = f.read_text(encoding="utf-8")
         # Insert ID into frontmatter
         if content.startswith("---"):
@@ -1123,9 +1120,13 @@ def copy(
         contents.append(content)
     
     # Add intro text and combine with horizontal rules
-    id_str = ", ".join(map(str, ids))
-    intro = f"Here is a copy of my brain dump(s) #{id_str}:"
+    n_dumps = len(ids)
+    intro = f"This is a copy of my last {n_dumps} dump{'s' if n_dumps > 1 else ''}:"
     combined = intro + "\n\n---\n\n" + "\n\n---\n\n".join(contents)
+    
+    # Append AI analysis instructions
+    ai_instructions = "\n\n---\n\nI want you to deeply analyse these quotes and extract any insights, contradictions, challenges, advice, ideas, motivation etc. that you think is important for me to know. Really pick it apart and give me transformative, practical and actually relevant insights."
+    combined += ai_instructions
     
     # Copy to clipboard
     try:
@@ -1133,7 +1134,7 @@ def copy(
         if len(ids) == 1:
             print_padded(f"[{MONOKAI['green']}]Copied dump #{ids[0]} to clipboard.[/{MONOKAI['green']}]")
         else:
-            print_padded(f"[{MONOKAI['green']}]Copied dumps #{id_str} to clipboard.[/{MONOKAI['green']}]")
+            print_padded(f"[{MONOKAI['green']}]Copied the last {n_dumps} dump(/s) to clipboard.[/{MONOKAI['green']}]")
     except pyperclip.PyperclipException as e:
         print_padded(f"[{MONOKAI['red']}]✗[/{MONOKAI['red']}] Failed to copy to clipboard: {e}")
         raise typer.Exit(1)
